@@ -11,57 +11,38 @@ pub mod log_helper;
 mod cli_reader;
 
 /**********************************************************************************
-* This over-arching 'mod' setup module 
-* a) establishes the final collection of parameters, taking into account both 
-* environmental and CLI values. 
-* b) Unpacks the file name to obtain data version and date, if possible, 
-* c) Obtains a database connection pool 
-* d) Orchestrates the creation of the lookup and summary schemas.
-* It has a collection of unit tests ensuring that the parameter generatiuon process 
-* is correct as well as some tests on the regex expression used on the source file.
+
 ***********************************************************************************/
 
 use crate::error_defs::{AppError, CustomError};
-//use crate::error_defs::AppError;
-use chrono::NaiveDate;
-use sqlx::postgres::{PgPoolOptions, PgConnectOptions, PgPool};
-use log::error;
 use std::path::PathBuf;
 use std::ffi::OsString;
 use std::fs;
-use std::time::Duration;
-use sqlx::ConnectOptions;
 use config_reader::Config;
 
 #[derive(Debug)]
 pub struct CliPars {
-    pub data_folder: PathBuf,
-    pub source_file: PathBuf,
-    pub data_version: String,
-    pub data_date: String,
+    pub source_list: String,
+    pub fz_folder: PathBuf,
+    pub fu_folder: PathBuf,
     pub flags: Flags, 
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Flags {
-    pub import_ror: bool,
-    pub process_data: bool,
-    pub export_text: bool,
-    pub export_csv: bool,
-    pub export_full_csv: bool,
-    pub create_lookups: bool,
-    pub create_summary: bool,
+    pub do_zip: bool,
+    pub do_unzip: bool,
+    pub all_mdr: bool,
+    pub use_folder: bool,
     pub test_run: bool,
 }
 
 pub struct InitParams {
-    pub data_folder: PathBuf,
-    pub log_folder: PathBuf,
-    pub output_folder: PathBuf,
-    pub source_file_name: PathBuf,
-    pub output_file_name: PathBuf,
-    pub data_version: String,
-    pub data_date: String,
+    pub mdr_zipped: PathBuf,
+    pub mdr_unzipped: PathBuf,
+    pub fdr_zipped: PathBuf,
+    pub fdr_unzipped: PathBuf,
+    pub log_folder_path: PathBuf,
     pub flags: Flags,
 }
 
@@ -73,142 +54,85 @@ pub async fn get_params(args: Vec<OsString>) -> Result<InitParams, AppError> {
       
     let cli_pars = cli_reader::fetch_valid_arguments(args)?;
 
-    if cli_pars.flags.create_lookups || cli_pars.flags.create_summary {
+    let config_file_path = "./config_zipper.toml".to_string();
+    let config_string: String = fs::read_to_string(config_file_path)?;
 
-       // Any ror data and any other flags or arguments are ignored.
+    let config_file: Config = config_reader::populate_config_vars(&config_string)?; 
+    let file_pars = config_file.files;  // guaranteed to exist
 
-        Ok(InitParams {
-            data_folder: PathBuf::new(),
-            log_folder: PathBuf::new(),
-            output_folder: PathBuf::new(),
-            source_file_name: PathBuf::new(),
-            output_file_name: PathBuf::new(),
-            data_version: "".to_string(),
-            data_date: "".to_string(),
-            flags: cli_pars.flags,
-        })
+    let empty_pb = PathBuf::from("");
+
+    // if -a or -s flag check mdr zipping  folders exist.
+
+    let mdr_zipped = file_pars.mdr_zipped;
+    let mdr_unzipped = file_pars.mdr_unzipped;
+
+    if cli_pars.flags.all_mdr || cli_pars.source_list.len() > 0 {
+
+       // check mdr folders exit
+       if mdr_zipped == empty_pb
+       {
+           let msg = "MDR based operation requested but parent folder for the zipped data not provided";
+           let cf_err = CustomError::new(msg);
+           return Result::Err(AppError::CsErr(cf_err));
+       }
+
+       if mdr_unzipped == empty_pb
+       {
+           let msg = "MDR based operation requested but parent folder for the unzipped data not provided";
+           let cf_err = CustomError::new(msg);
+           return Result::Err(AppError::CsErr(cf_err));
+       }
     }
-    else {
+        
+    // fdr folder paths may be available in CL arguments
 
-        // Normal import and / or processing and / or outputting
-        // If folder name also given in CL args the CL version takes precedence
-
-        let source_file_path = "./config_r_umls.toml".to_string();
-        let config_file: Config = config_reader::populate_config_vars(&source_file_path)?; 
-        let file_pars = config_file.files;  // guaranteed to exist
-
-        let empty_pb = PathBuf::from("");
-        let mut data_folder_good = true;
-
-        let mut data_folder = cli_pars.data_folder;
-        if data_folder == empty_pb {
-            data_folder =  file_pars.data_folder_path;
-        }
-
-        // Does this folder exist and is it accessible? - If not and the 
-        // 'R' (import ror) option is active, raise error and exit program.
-
-        if !folder_exists (&data_folder) 
-        {   
-            data_folder_good = false;
-        }
-
-        if !data_folder_good && cli_pars.flags.import_ror { 
-
-            let msg = "Required data folder does not exists or is not accessible";
-            let cf_err = CustomError::new(msg);
-            return Result::Err(AppError::CsErr(cf_err));
-        }
-
-        let mut log_folder = file_pars.log_folder_path;
-        if log_folder == empty_pb && data_folder_good {
-            log_folder = data_folder.clone();
-        }
-        else {
-            if !folder_exists (&log_folder) { 
-                fs::create_dir_all(&log_folder)?;
-            }
-        }
-
-        let mut output_folder = file_pars.output_folder_path;
-        if output_folder == empty_pb && data_folder_good {
-            output_folder = data_folder.clone();
-        }
-        else {
-            if !folder_exists (&output_folder) { 
-                fs::create_dir_all(&output_folder)?;
-            }
-        }
-
-        // If source file name given in CL args the CL version takes precedence.
+    let mut fdr_zipped = cli_pars.fz_folder;
+    if fdr_zipped == empty_pb
+    {
+        fdr_zipped = file_pars.fdr_zipped;
+    }
+    if cli_pars.flags.use_folder && fdr_zipped == empty_pb
+    {
+        let msg = "Folder based operation requested but no path provided for the zipped folder";
+        let cf_err = CustomError::new(msg);
+        return Result::Err(AppError::CsErr(cf_err));
+    }
     
-        let mut source_file_name= cli_pars.source_file;
-        if source_file_name == empty_pb {
-            source_file_name =  file_pars.src_file_name;
-            if source_file_name == empty_pb && cli_pars.flags.import_ror {   // Required data is missing - Raise error and exit program.
-                 let msg = "Source file name not provided in either command line or environment file";
-                 let cf_err = CustomError::new(msg);
-                 return Result::Err(AppError::CsErr(cf_err));
-            }
-        }
-         
-        // get the output file name - from the config variables (may be a default)
-                
-        let output_file_name =  file_pars.output_file_name;
-                     
-        let mut data_version = "".to_string();
-        let mut data_date = "".to_string();
-
-        
-        if data_version == "".to_string() ||  data_date == "".to_string()     
-        {
-            // Parsing of file name has not been completely successful, so get the version and date 
-            // of the data from the CLI, or failing that the config file.
-
-            data_version= cli_pars.data_version;
-            if data_version == "" {
-                data_version =  config_file.data_details.data_version;
-                if data_version == "" && cli_pars.flags.import_ror {   // Required data is missing - Raise error and exit program.
-                    let msg = "Data version not provided in either command line or environment file";
-                    let cf_err = CustomError::new(msg);
-                    return Result::Err(AppError::CsErr(cf_err));
-                }
-            }
-        
-            data_date = match NaiveDate::parse_from_str(&cli_pars.data_date, "%Y-%m-%d") {
-                Ok(_) => cli_pars.data_date,
-                Err(_) => "".to_string(),
-            };
-
-            if data_date == "" {  
-                    let env_date = &config_file.data_details.data_date;
-                    data_date = match NaiveDate::parse_from_str(env_date, "%Y-%m-%d") {
-                    Ok(_) => env_date.to_string(),
-                    Err(_) => "".to_string(),
-                };
-
-                if data_date == "" && cli_pars.flags.import_ror {   // Raise an AppError...required data is missing.
-                    let msg = "Data date not provided";
-                    let cf_err = CustomError::new(msg);
-                    return Result::Err(AppError::CsErr(cf_err));
-                }
-            }
-        }
-
-        // For execution flags read from the environment variables
-       
-        Ok(InitParams {
-            data_folder,
-            log_folder,
-            output_folder,
-            source_file_name,
-            output_file_name,
-            data_version,
-            data_date,
-            flags: cli_pars.flags,
-        })
-
+    let mut fdr_unzipped = cli_pars.fu_folder;
+    if fdr_unzipped == empty_pb
+    {
+        fdr_unzipped = file_pars.fdr_unzipped;
     }
+    if fdr_unzipped == empty_pb
+    {
+        let msg = "Folder based operation requested but no path provided for the unzipped folder";
+        let cf_err = CustomError::new(msg);
+        return Result::Err(AppError::CsErr(cf_err));
+    }
+
+
+    // if logging folder does not exist create it
+
+    let mut log_folder = file_pars.log_folder_path;
+    if log_folder == empty_pb {
+        log_folder = PathBuf::from("E:\\MDR\\Zipping\\logs");
+    }
+    if !folder_exists (&log_folder) { 
+        fs::create_dir_all(&log_folder)?;
+    }
+
+    // For execution flags read from the environment variables
+       
+    Ok(InitParams {
+        mdr_zipped: mdr_zipped,
+        mdr_unzipped: mdr_unzipped,
+        fdr_zipped: fdr_zipped,
+        fdr_unzipped: fdr_unzipped,
+        log_folder_path: log_folder,
+        flags: cli_pars.flags,
+    })
+
 }
 
 
@@ -224,123 +148,14 @@ fn folder_exists(folder_name: &PathBuf) -> bool {
         
 
 
-pub async fn get_db_pool() -> Result<PgPool, AppError> {  
-
-    // Establish DB name and thence the connection string
-    // (done as two separate steps to allow for future development).
-    // Use the string to set up a connection options object and change 
-    // the time threshold for warnings. Set up a DB pool option and 
-    // connect using the connection options object.
-
-    let db_name = match config_reader::fetch_db_name() {
-        Ok(n) => n,
-        Err(e) => return Err(e),
-    };
-
-    let db_conn_string = config_reader::fetch_db_conn_string(db_name)?;  
-   
-    let mut opts: PgConnectOptions = db_conn_string.parse()?;
-    opts = opts.log_slow_statements(log::LevelFilter::Warn, Duration::from_secs(3));
-
-    match PgPoolOptions::new()
-    .max_connections(5) 
-    .connect_with(opts).await {
-        Ok(p) => Ok(p),
-        Err(e) => {
-            error!("An error occured while creating the DB pool: {}", e);
-            error!("Check the DB credentials and confirm the database is available");
-            return Err(AppError::SqErr(e))
-        },
-    }
-}
-
-
-
 /* 
 // Tests
 #[cfg(test)]
 
 mod tests {
     use super::*;
-   
-   // regex tests
-   #[test]
-   fn check_file_name_regex_works_1 () {
-      let test_file_name = "v1.50 2024-12-11.json".to_string();
-      assert_eq!(is_compliant_file_name(&test_file_name), true);
-      assert_eq!(get_data_version(&test_file_name), "v1.50");
-      assert_eq!(get_data_date(&test_file_name), "2024-12-11");
-   }
-
-   #[test]
-   fn check_file_name_regex_works_2 () {
-      let test_file_name = "v1.50-2024-12-11.json".to_string();
-      assert_eq!(is_compliant_file_name(&test_file_name), true);
-      assert_eq!(get_data_version(&test_file_name), "v1.50");
-      assert_eq!(get_data_date(&test_file_name), "2024-12-11");
-   }  
-
-   #[test]
-   fn check_file_name_regex_works_3 () {
-      let test_file_name = "v1.50 20241211.json".to_string();
-      assert_eq!(is_compliant_file_name(&test_file_name), true);
-      assert_eq!(get_data_version(&test_file_name), "v1.50");
-      assert_eq!(get_data_date(&test_file_name), "2024-12-11");
-   }
-
-   #[test]
-   fn check_file_name_regex_works_4 () {
-      let test_file_name = "v1.50-20241211.json".to_string();
-      assert_eq!(is_compliant_file_name(&test_file_name), true);
-      assert_eq!(get_data_version(&test_file_name), "v1.50");
-      assert_eq!(get_data_date(&test_file_name), "2024-12-11");
-   }
-
-   #[test]
-   fn check_file_name_regex_works_5 () {
-      let test_file_name = "v1.50-2024-1211.json".to_string();
-      assert_eq!(is_compliant_file_name(&test_file_name), true);
-      assert_eq!(get_data_version(&test_file_name), "v1.50");
-      assert_eq!(get_data_date(&test_file_name), "2024-12-11");
-   }
-
-   #[test]
-   fn check_file_name_regex_works_6 () {
-      let test_file_name = "v1.59-2025-01-23-ror-data_schema_v2.json".to_string();
-      assert_eq!(is_compliant_file_name(&test_file_name), true);
-      assert_eq!(get_data_version(&test_file_name), "v1.59");
-      assert_eq!(get_data_date(&test_file_name), "2025-01-23");
-   }
-   
-   #[test]
-    fn check_file_name_regex_works_7 () {
-        let test_file_name = "1.50 2024-12-11.json".to_string();
-        assert_eq!(is_compliant_file_name(&test_file_name), false);
-
-        let test_file_name = "v1.50--2024-12-11.json".to_string();
-        assert_eq!(is_compliant_file_name(&test_file_name), false);
-
-        let test_file_name = "v1.50  20241211.json".to_string();
-        assert_eq!(is_compliant_file_name(&test_file_name), false);
-
-        let test_file_name = "v1.50 20242211.json".to_string();
-        assert_eq!(is_compliant_file_name(&test_file_name), false);
-
-        let test_file_name = "v1.50.20241211.json".to_string();
-        assert_eq!(is_compliant_file_name(&test_file_name), false);
-    }
-}
-    */
-    // Ensure the parameters are being correctly extracted from the CLI arguments
-    // The testing functions need to be async because of the call to get_params.
-    // the test therefore uses the async version of the temp_env::with_vars function.
-    // This function needs to be awaited to execute.
-    // The closure is replaced by an explicitly async block rather than
-    // a normal closure. Inserting '||' before or after the 'async' results
-    // in multiple complaints from the compiler. The async block can also
-    // be replaced by a separate async function and called explicitly.
- 
- /* 
+      
+    
     #[tokio::test]
     async fn check_env_vars_overwrite_blank_cli_values() {
 
