@@ -1,8 +1,6 @@
 /***************************************************************************
  * Establishes the log for the programme's operation using log and log4rs, 
  * and includes various helper functions.
- * Once established the log file appears to be accessible to any log
- * statement within the rest of the program (after 'use log:: ...').
  ***************************************************************************/
 
 use chrono::Local;
@@ -20,10 +18,10 @@ use log4rs::{
     encode::pattern::PatternEncoder,
 };
 
-pub fn setup_log (data_folder: &PathBuf) -> Result<log4rs::Handle, AppError> {
+pub fn setup_log (log_folder: &PathBuf) -> Result<log4rs::Handle, AppError> {
     let datetime_string = Local::now().format("%m-%d %H%M%S").to_string();
     let log_file_name = format!("zipper log at {}.log", datetime_string);
-    let log_file_path = [data_folder, &PathBuf::from(log_file_name)].iter().collect();
+    let log_file_path = [log_folder, &PathBuf::from(log_file_name)].iter().collect();
     config_log (&log_file_path)
 }
 

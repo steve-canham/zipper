@@ -1,15 +1,11 @@
-/***************************************************************************
- * Module 
- * 
- * 
- * 
- ***************************************************************************/
 
 use std::sync::OnceLock;
 use toml;
 use serde::Deserialize;
 use crate::error_defs::{AppError, CustomError};
 use std::path::PathBuf;
+
+// Following 3 structs used in the reading of the toml config file
 
 #[derive(Debug, Deserialize)]
 pub struct TomlConfig {
@@ -35,6 +31,8 @@ pub struct TomlDBPars {
     pub db_name: Option<String>,
 }
 
+// Following 3 structs used in the generation of the config parameters
+
 pub struct Config {
     pub files: FilePars, 
     pub db_pars: DBPars,
@@ -56,6 +54,8 @@ pub struct DBPars {
     pub db_port: usize,
     pub db_name: String,
 }
+
+// OnceLock used to provide a static singleton resource with database connection parameters
 
 pub static DB_PARS: OnceLock<DBPars> = OnceLock::new();
 
@@ -250,6 +250,8 @@ pub fn fetch_db_conn_string(db_name: String) -> Result<String, AppError> {
 
 
 
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,7 +363,7 @@ db_password="password"
 
 
 #[test]
-    fn missing_port_gets_default() {
+    fn check_missing_port_gets_default() {
 
         let config = r#"
 [files]

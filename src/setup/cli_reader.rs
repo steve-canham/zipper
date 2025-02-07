@@ -1,17 +1,24 @@
-/***************************************************************************
- * Module uses clap crate to read command line arguments. These include 
- * possible A, S, T and C flags, and possible strings for the data folder and 
- * source file name. If no flags 'S' (= import data) is returned by default.
- * Folder and file names return an empty string ("") rather than null if not 
- * present. 
- ***************************************************************************/
-
 use clap::{command, Arg, ArgMatches};
 use crate::error_defs::{CustomError, AppError};
-use crate::setup::{CliPars, Flags};
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+#[derive(Debug)]
+pub struct CliPars {
+    pub source_list: String,
+    pub fz_folder: PathBuf,
+    pub fu_folder: PathBuf,
+    pub flags: Flags, 
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Flags {
+    pub do_zip: bool,
+    pub do_unzip: bool,
+    pub all_mdr: bool,
+    pub use_folder: bool,
+    pub test_run: bool,
+}
 
 pub fn fetch_valid_arguments(args: Vec<OsString>) -> Result<CliPars, AppError>
 { 

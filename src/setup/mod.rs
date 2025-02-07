@@ -1,41 +1,31 @@
 /**********************************************************************************
-* The setup module. Referenced in main by 'mod setup'.
-* The two public modules allow integration tests to call into them, to give those
-* tests the same DB conection pool and logging capability as the main library.
-* The log established by log_helper seems to be available throughout the program
-* via a suitable 'use' statement.
+The setup module, and the get_params function in this file in particular, 
+orchestrates the collection and fusion of parameters as provided in 
+1) a config toml file, and 
+2) command line arguments. 
+Where a parameter may be given in either the config file or command line, the 
+command line version always over-writes anything from the file.
+The module also checks the parameters for completeness (those required will vary, 
+depending on the activity specified). If possible, defaults are used to stand in for 
+mising parameters. If not possible the program stops with a message explaining the 
+problem.
+The module also provides a database connection pool on demand.
 ***********************************************************************************/
 
 pub mod config_reader;
 pub mod log_helper;
 mod cli_reader;
 
-/**********************************************************************************
-
-***********************************************************************************/
-
 use crate::error_defs::{AppError, CustomError};
+use sqlx::postgres::{PgPoolOptions, PgConnectOptions, PgPool};
+use log::error;
+use std::time::Duration;
+use sqlx::ConnectOptions;
 use std::path::PathBuf;
 use std::ffi::OsString;
 use std::fs;
 use config_reader::Config;
-
-#[derive(Debug)]
-pub struct CliPars {
-    pub source_list: String,
-    pub fz_folder: PathBuf,
-    pub fu_folder: PathBuf,
-    pub flags: Flags, 
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct Flags {
-    pub do_zip: bool,
-    pub do_unzip: bool,
-    pub all_mdr: bool,
-    pub use_folder: bool,
-    pub test_run: bool,
-}
+use cli_reader::Flags;
 
 pub struct InitParams {
     pub mdr_zipped: PathBuf,
@@ -43,6 +33,7 @@ pub struct InitParams {
     pub fdr_zipped: PathBuf,
     pub fdr_unzipped: PathBuf,
     pub log_folder_path: PathBuf,
+    pub source_list: Vec<i32>,
     pub flags: Flags,
 }
 
@@ -59,7 +50,6 @@ pub async fn get_params(args: Vec<OsString>) -> Result<InitParams, AppError> {
 
     let config_file: Config = config_reader::populate_config_vars(&config_string)?; 
     let file_pars = config_file.files;  // guaranteed to exist
-
     let empty_pb = PathBuf::from("");
 
     // if -a or -s flag check mdr zipping  folders exist.
@@ -67,7 +57,19 @@ pub async fn get_params(args: Vec<OsString>) -> Result<InitParams, AppError> {
     let mdr_zipped = file_pars.mdr_zipped;
     let mdr_unzipped = file_pars.mdr_unzipped;
 
-    if cli_pars.flags.all_mdr || cli_pars.source_list.len() > 0 {
+    let mut source_list = Vec::new();
+    if cli_pars.source_list.len() > 0
+    {
+        let ids_as_strs: Vec<&str> = cli_pars.source_list.split(',').collect(); 
+        for sid in ids_as_strs {
+            match sid.parse::<i32>() {
+                Ok(id) => source_list.push(id),
+                Err(_) => {}   // do nothing with this id, whatever the error
+            }
+        }
+    }
+
+    if cli_pars.flags.all_mdr || source_list.len() > 0 {
 
        // check mdr folders exit
        if mdr_zipped == empty_pb
@@ -130,11 +132,11 @@ pub async fn get_params(args: Vec<OsString>) -> Result<InitParams, AppError> {
         fdr_zipped: fdr_zipped,
         fdr_unzipped: fdr_unzipped,
         log_folder_path: log_folder,
+        source_list: source_list,
         flags: cli_pars.flags,
     })
 
 }
-
 
 fn folder_exists(folder_name: &PathBuf) -> bool {
     let xres = folder_name.try_exists();
@@ -146,7 +148,35 @@ fn folder_exists(folder_name: &PathBuf) -> bool {
     res
 }
         
+pub async fn get_db_pool() -> Result<PgPool, AppError> {  
 
+    // Establish DB name and thence the connection string
+    // (done as two separate steps to allow for future development).
+    // Use the string to set up a connection options object and change 
+    // the time threshold for warnings. Set up a DB pool option and 
+    // connect using the connection options object.
+
+    let db_name = match config_reader::fetch_db_name() {
+        Ok(n) => n,
+        Err(e) => return Err(e),
+    };
+
+    let db_conn_string = config_reader::fetch_db_conn_string(db_name)?;  
+   
+    let mut opts: PgConnectOptions = db_conn_string.parse()?;
+    opts = opts.log_slow_statements(log::LevelFilter::Warn, Duration::from_secs(3));
+
+    match PgPoolOptions::new()
+    .max_connections(5) 
+    .connect_with(opts).await {
+        Ok(p) => Ok(p),
+        Err(e) => {
+            error!("An error occured while creating the DB pool: {}", e);
+            error!("Check the DB credentials and confirm the database is available");
+            return Err(AppError::SqErr(e))
+        },
+    }
+}
 
 /* 
 // Tests
