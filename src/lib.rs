@@ -7,6 +7,7 @@ mod unzipper;
 use error_defs::AppError;
 use setup::log_helper;
 use std::ffi::OsString;
+use std::fs;
 
 
 #[derive(sqlx::FromRow)]
@@ -19,8 +20,10 @@ pub struct SourceDetails {
 }
 
 pub async fn run(args: Vec<OsString>) -> Result<(), AppError> {
+
+    let config_string: String = fs::read_to_string("./app_config.toml".to_string())?;
     
-    let params = setup::get_params(args).await?;
+    let params = setup::get_params(args, config_string).await?;
     let flags = params.flags;
     let test_run = flags.test_run;
 

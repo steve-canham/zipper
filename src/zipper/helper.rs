@@ -20,7 +20,7 @@ fn zip_mdr_files_in_single_folder() -> Result<(), AppError> {
 }
 
 
-fn zip_files(file_list: Vec<String>, zip_folder_path: &PathBuf, file_name_stem: String) -> Result<(usize), AppError> {
+fn zip_files(file_list: Vec<String>, zip_folder_path: &PathBuf, file_name_stem: String) -> Result<usize, AppError> {
 
     // file_list is the list of full paths for each file in the folder
     // zip_folder_path is the full path of the folder in which the zip files are to be stored
@@ -36,7 +36,7 @@ fn zip_files(file_list: Vec<String>, zip_folder_path: &PathBuf, file_name_stem: 
 
     for i in 0..zip_files_needed {
 
-        let start_file_num = (i * files_per_zip);
+        let start_file_num = i * files_per_zip;
         let start_file = (start_file_num + 1).to_string();
         let mut end_file_num = (i + 1) * files_per_zip;
         if end_file_num >= file_num {

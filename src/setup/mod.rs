@@ -37,16 +37,13 @@ pub struct InitParams {
     pub flags: Flags,
 }
 
-pub async fn get_params(args: Vec<OsString>) -> Result<InitParams, AppError> {
+pub async fn get_params(args: Vec<OsString>, config_string: String) -> Result<InitParams, AppError> {
 
     // Called from main as the initial task of the program.
     // Returns a struct that contains the program's parameters.
     // Start by obtaining CLI arguments and reading parameters from .env file.
       
     let cli_pars = cli_reader::fetch_valid_arguments(args)?;
-
-    let config_file_path = "./config_zipper.toml".to_string();
-    let config_string: String = fs::read_to_string(config_file_path)?;
 
     let config_file: Config = config_reader::populate_config_vars(&config_string)?; 
     let file_pars = config_file.files;  // guaranteed to exist
