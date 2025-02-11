@@ -16,9 +16,8 @@ pub mod config_reader;
 pub mod log_helper;
 mod cli_reader;
 
-use crate::error_defs::{AppError, CustomError};
+use crate::err::AppError;
 use sqlx::postgres::{PgPoolOptions, PgConnectOptions, PgPool};
-use log::error;
 use std::time::Duration;
 use sqlx::ConnectOptions;
 use std::path::PathBuf;
@@ -37,7 +36,7 @@ pub struct InitParams {
     pub flags: Flags,
 }
 
-pub async fn get_params(args: Vec<OsString>, config_string: String) -> Result<InitParams, AppError> {
+pub fn get_params(args: Vec<OsString>, config_string: String) -> Result<InitParams, AppError> {
 
     // Called from main as the initial task of the program.
     // Returns a struct that contains the program's parameters.
@@ -48,9 +47,7 @@ pub async fn get_params(args: Vec<OsString>, config_string: String) -> Result<In
     let config_file: Config = config_reader::populate_config_vars(&config_string)?; 
     let file_pars = config_file.files;  // guaranteed to exist
     let empty_pb = PathBuf::from("");
-
-    // if -a or -s flag check mdr zipping  folders exist.
-
+  
     let mdr_zipped = file_pars.mdr_zipped;
     let mdr_unzipped = file_pars.mdr_unzipped;
 
@@ -59,43 +56,17 @@ pub async fn get_params(args: Vec<OsString>, config_string: String) -> Result<In
     {
         let ids_as_strs: Vec<&str> = cli_pars.source_list.split(',').collect(); 
         for sid in ids_as_strs {
-            match sid.parse::<i32>() {
+            match sid.trim().parse::<i32>() {
                 Ok(id) => source_list.push(id),
                 Err(_) => {}   // do nothing with this id, whatever the error
             }
         }
     }
 
-    if cli_pars.flags.all_mdr || source_list.len() > 0 {
-
-       // check mdr folders exit
-       if mdr_zipped == empty_pb
-       {
-           let msg = "MDR based operation requested but parent folder for the zipped data not provided";
-           let cf_err = CustomError::new(msg);
-           return Result::Err(AppError::CsErr(cf_err));
-       }
-
-       if mdr_unzipped == empty_pb
-       {
-           let msg = "MDR based operation requested but parent folder for the unzipped data not provided";
-           let cf_err = CustomError::new(msg);
-           return Result::Err(AppError::CsErr(cf_err));
-       }
-    }
-        
-    // fdr folder paths may be available in CL arguments
-
     let mut fdr_zipped = cli_pars.fz_folder;
     if fdr_zipped == empty_pb
     {
         fdr_zipped = file_pars.fdr_zipped;
-    }
-    if cli_pars.flags.use_folder && fdr_zipped == empty_pb
-    {
-        let msg = "Folder based operation requested but no path provided for the zipped folder";
-        let cf_err = CustomError::new(msg);
-        return Result::Err(AppError::CsErr(cf_err));
     }
     
     let mut fdr_unzipped = cli_pars.fu_folder;
@@ -103,13 +74,43 @@ pub async fn get_params(args: Vec<OsString>, config_string: String) -> Result<In
     {
         fdr_unzipped = file_pars.fdr_unzipped;
     }
-    if fdr_unzipped == empty_pb
-    {
-        let msg = "Folder based operation requested but no path provided for the unzipped folder";
-        let cf_err = CustomError::new(msg);
-        return Result::Err(AppError::CsErr(cf_err));
+
+    if cli_pars.flags.all_mdr || source_list.len() > 0 {
+
+        // if -a or -s flag check mdr zipping  folders exist.
+       
+       if mdr_zipped == empty_pb
+       {
+        return Result::Err(AppError::MissingProgramParameter("mdr_zipped".to_string()));
+       }
+
+       if mdr_unzipped == empty_pb
+       {
+        return Result::Err(AppError::MissingProgramParameter("mdr_unipped".to_string()));
+       }
     }
 
+    if cli_pars.flags.use_folder { 
+
+        if fdr_zipped == empty_pb
+        {
+            return Result::Err(AppError::MissingProgramParameter("fdr_zipped".to_string()));
+        }
+        if fdr_unzipped == empty_pb
+        {
+            return Result::Err(AppError::MissingProgramParameter("fdr_unzipped".to_string()));
+        }
+    }
+
+    if cli_pars.flags.use_folder && (cli_pars.flags.all_mdr || source_list.len() > 0) {   
+        let msg = "Both folder and mdr processing requested at the same time!".to_string();
+        return Result::Err(AppError::InconsistentProgramParameter(msg));
+    }
+ 
+    if !cli_pars.flags.all_mdr && !cli_pars.flags.use_folder && source_list.len() == 0 {   
+        let msg = "No source type has been identified for zipping or unzipping!".to_string();
+        return Result::Err(AppError::InconsistentProgramParameter(msg));
+    }
 
     // if logging folder does not exist create it
 
@@ -158,286 +159,297 @@ pub async fn get_db_pool() -> Result<PgPool, AppError> {
         Err(e) => return Err(e),
     };
 
-    let db_conn_string = config_reader::fetch_db_conn_string(db_name)?;  
+    let db_conn_string = config_reader::fetch_db_conn_string(&db_name)?;  
    
-    let mut opts: PgConnectOptions = db_conn_string.parse()?;
+    let mut opts: PgConnectOptions = db_conn_string.parse()
+                     .map_err(|e| AppError::DBPoolError("Problem with parsing conection string".to_string(), e))?;
+
     opts = opts.log_slow_statements(log::LevelFilter::Warn, Duration::from_secs(3));
 
-    match PgPoolOptions::new()
-    .max_connections(5) 
-    .connect_with(opts).await {
-        Ok(p) => Ok(p),
-        Err(e) => {
-            error!("An error occured while creating the DB pool: {}", e);
-            error!("Check the DB credentials and confirm the database is available");
-            return Err(AppError::SqErr(e))
-        },
-    }
+    PgPoolOptions::new()
+        .max_connections(5) 
+        .connect_with(opts).await
+        .map_err(|e| AppError::DBPoolError(format!("Problem with connecting to database {} and obtaining Pool", db_name), e))
 }
 
-/* 
+
 // Tests
 #[cfg(test)]
 
+
 mod tests {
     use super::*;
-      
-    
-    #[tokio::test]
-    async fn check_env_vars_overwrite_blank_cli_values() {
 
-        // Note that in most cases the folder path given must exist, and be 
-        // accessible, or get_params will panic and an error will be thrown. 
+    // Ensure the parameters are being correctly combined.
 
-        temp_env::async_with_vars(
-        [
-            ("data_folder_path", Some("E:/ROR/data")),
-            ("src_file_name", Some("v1.58 20241211.json")),
-            ("output_file_name", Some("results 25.json")),
-            ("data_version", Some("v1.60")),
-            ("data_date", Some("2025-12-11")),
+    #[test]
+    fn check_config_vars_overwrite_blank_cli_values() {
 
-        ],
-        async { 
-            let args : Vec<&str> = vec!["target/debug/ror1.exe"];
-            let test_args = args.iter().map(|x| x.to_string().into()).collect::<Vec<OsString>>();
-            let res = get_params(test_args).await.unwrap();
-    
-            assert_eq!(res.flags.import_ror, true);
-            assert_eq!(res.flags.process_data, false);
-            assert_eq!(res.flags.export_text, false);
-            assert_eq!(res.flags.create_lookups, false);
-            assert_eq!(res.flags.create_summary, false);
-            assert_eq!(res.data_folder, PathBuf::from("E:/ROR/data"));
-            assert_eq!(res.log_folder, PathBuf::from("E:/ROR/logs"));
-            assert_eq!(res.output_folder, PathBuf::from("E:/ROR/outputs"));
-            assert_eq!(res.source_file_name, "v1.58 20241211.json");
-            let lt = Local::now().format("%m-%d %H%M%S").to_string();
-            assert_eq!(res.output_file_name, format!("results 25.json at {}.txt", lt));
-            assert_eq!(res.data_version, "v1.58");
-            assert_eq!(res.data_date, "2024-12-11");
-        }
-       ).await;
+        let config = r#"
+[files]
+mdr_zipped="E:\\MDR\\Zipped source files"
+mdr_unzipped="E:\\MDR\\MDR Source files"
 
-    }
+fdr_zipped="E:\\MDR source data\\UMLS\\zipped data"
+fdr_unzipped="E:\\MDR source data\\UMLS\\data"
 
+log_folder_path="E:\\MDR\\Zipping\\logs"
 
-    #[tokio::test]
-    async fn check_cli_vars_overwrite_env_values() {
+[database]
+db_host="localhost"
+db_user="user_name"
+db_password="password"
+db_port="5433"
+db_name="mon"
+"#;
 
-        // Note that the folder path given must exist, 
-        // and be accessible, or get_params will panic
-        // and an error will be thrown. 
+        let config_string = config.to_string();
+        config_reader::populate_config_vars(&config_string).unwrap();
 
-        temp_env::async_with_vars(
-        [
-            ("data_folder_path", Some("E:/ROR/20241211 1.58 data")),
-            ("src_file_name", Some("v1.58 20241211.json")),
-            ("data_version", Some("v1.59")),
-            ("data_date", Some("2025-12-11")),
-            ("output_file_name", Some("results 27.json")),
-        ],
-        async { 
-            let args : Vec<&str> = vec!["target/debug/ror1.exe", "-r", "-p", "-t", "-x",
-                                     "-f", "E:/ROR/data", "-d", "2026-12-25", "-s", "schema2 data.json", "-v", "v1.60"];
-            let test_args = args.iter().map(|x| x.to_string().into()).collect::<Vec<OsString>>();
-            let res = get_params(test_args).await.unwrap();
-    
-            assert_eq!(res.flags.import_ror, true);
-            assert_eq!(res.flags.process_data, true);
-            assert_eq!(res.flags.export_text, true);
-            assert_eq!(res.flags.export_csv, true);
-            assert_eq!(res.flags.create_lookups, false);
-            assert_eq!(res.flags.create_summary, false);
-            assert_eq!(res.data_folder, PathBuf::from("E:/ROR/data"));
-            assert_eq!(res.log_folder, PathBuf::from("E:/ROR/logs"));
-            assert_eq!(res.output_folder, PathBuf::from("E:/ROR/outputs"));
-            assert_eq!(res.source_file_name, "schema2 data.json");
-            let lt = Local::now().format("%m-%d %H%M%S").to_string();
-            assert_eq!(res.output_file_name, format!("results 27.json at {}.txt", lt));
-            assert_eq!(res.data_version, "v1.60");
-            assert_eq!(res.data_date, "2026-12-25");
-        }
-       ).await;
-
-    }
-
-
-    #[tokio::test]
-    async fn check_cli_vars_with_i_flag() {
-
-        // Note that the folder path given must exist, 
-        // and be accessible, or get_params will panic
-        // and an error will be thrown. 
-
-        temp_env::async_with_vars(
-        [
-            ("data_folder_path", Some("E:/ROR/20241211 1.58 data")),
-            ("src_file_name", Some("v1.58 20241211.json")),
-            ("data_date", Some("2025-12-11")),
-            ("output_file_name", Some("results 27.json")),
-        ],
-        async { 
-            let args : Vec<&str> = vec!["target/debug/ror1.exe", "-r", "-p", "-i", 
-                                        "-f", "E:/ROR/data", "-d", "2026-12-25", "-s", "schema2 data.json"];
-            let test_args = args.iter().map(|x| x.to_string().into()).collect::<Vec<OsString>>();
-            let res = get_params(test_args).await.unwrap();
-    
-            assert_eq!(res.flags.import_ror, false);
-            assert_eq!(res.flags.process_data, false);
-            assert_eq!(res.flags.export_text, false);
-            assert_eq!(res.flags.create_lookups,true);
-            assert_eq!(res.flags.create_summary, true);
-            assert_eq!(res.data_folder, PathBuf::new());
-            assert_eq!(res.log_folder, PathBuf::new());
-            assert_eq!(res.output_folder, PathBuf::new());
-            assert_eq!(res.source_file_name, "".to_string());
-            assert_eq!(res.output_file_name, "".to_string());
-            assert_eq!(res.data_version, "".to_string());
-            assert_eq!(res.data_date, "".to_string());
-        }
-       ).await;
-
-    }
-
-
-    #[tokio::test]
-    async fn check_cli_vars_with_a_flag_and_new_win_folders() {
-
-        // Note that the folder path given must exist, 
-        // and be accessible, or get_params will panic
-        // and an error will be thrown. 
-
-        temp_env::async_with_vars(
-        [
-            ("data_folder_path", Some("E:\\ROR\\20241211 1.58 data")),
-            ("log_folder_path", Some("E:\\ROR\\some logs")),
-            ("output_folder_path", Some("E:\\ROR\\dummy\\some outputs")),
-            ("src_file_name", Some("v1.58 20241211.json")),
-            ("data_date", Some("2025-12-11")),
-            ("output_file_name", Some("results 28.json")),
-        ],
-        async { 
-            let args : Vec<&str> = vec!["target/debug/ror1.exe", "-a", "-f", "E:\\ROR\\data", 
-                                       "-d", "2026-12-25", "-s", "schema2 data.json", "-v", "v1.60"];
-            let test_args = args.iter().map(|x| x.to_string().into()).collect::<Vec<OsString>>();
-            let res = get_params(test_args).await.unwrap();
-    
-            assert_eq!(res.flags.import_ror, true);
-            assert_eq!(res.flags.process_data, true);
-            assert_eq!(res.flags.export_text, true);
-            assert_eq!(res.flags.create_lookups, false);
-            assert_eq!(res.flags.create_summary, false);
-            assert_eq!(res.data_folder, PathBuf::from("E:/ROR/data"));
-            assert_eq!(res.log_folder, PathBuf::from("E:/ROR/some logs"));
-            assert_eq!(res.output_folder, PathBuf::from("E:/ROR/dummy/some outputs"));
-            assert_eq!(res.source_file_name, "schema2 data.json");
-            let lt = Local::now().format("%m-%d %H%M%S").to_string();
-            assert_eq!(res.output_file_name, format!("results 28.json at {}.txt", lt));
-            assert_eq!(res.data_version, "v1.60");
-            assert_eq!(res.data_date, "2026-12-25");
-        }
-      ).await;
-
-    }
-    
-    #[tokio::test]
-    async fn check_cli_vars_with_a_flag_and_new_posix_folders() {
-
-        // Note that the folder path given must exist, 
-        // and be accessible, or get_params will panic
-        // and an error will be thrown. 
-
-        temp_env::async_with_vars(
-        [
-            ("data_folder_path", Some("E:/ROR/data")),
-            ("log_folder_path", Some("E:/ROR/some logs 2")),
-            ("output_folder_path", Some("E:/ROR/dummy 2/some outputs")),
-            ("src_file_name", Some("v1.58 20241211.json")),
-            ("data_date", Some("2025-12-11")),
-            ("output_file_name", Some("results 28.json")),
-        ],
-        async { 
-            let args : Vec<&str> = vec!["target/debug/ror1.exe", "-a", "-f", "E:/ROR/data", 
-                                       "-d", "2026-12-25", "-s", "schema2 data.json", "-v", "v1.60"];
-            let test_args = args.iter().map(|x| x.to_string().into()).collect::<Vec<OsString>>();
-            let res = get_params(test_args).await.unwrap();
-    
-            assert_eq!(res.flags.import_ror, true);
-            assert_eq!(res.flags.process_data, true);
-            assert_eq!(res.flags.export_text, true);
-            assert_eq!(res.flags.create_lookups, false);
-            assert_eq!(res.flags.create_summary, false);
-            assert_eq!(res.data_folder, PathBuf::from("E:/ROR/data"));
-            assert_eq!(res.log_folder, PathBuf::from("E:/ROR/some logs 2"));
-            assert_eq!(res.output_folder, PathBuf::from("E:/ROR/dummy 2/some outputs"));
-            assert_eq!(res.source_file_name, "schema2 data.json");
-            let lt = Local::now().format("%m-%d %H%M%S").to_string();
-            assert_eq!(res.output_file_name, format!("results 28.json at {}.txt", lt));
-            assert_eq!(res.data_version, "v1.60");
-            assert_eq!(res.data_date, "2026-12-25");
-        }
-      ).await;
-
-    }
-
-
-    #[tokio::test]
-    #[should_panic]
-    async fn check_wrong_data_folder_panics_if_r() {
-    
-    temp_env::async_with_vars(
-    [
-        ("data_folder_path", Some("E:/ROR/20240607 1.47 data")),
-        ("log_folder_path", Some("E:/ROR/some logs")),
-        ("output_folder_path", Some("E:/ROR/dummy/some outputs")),
-        ("src_file_name", Some("v1.58 20241211.json")),
-        ("data_date", Some("2025-12-11")),
-        ("output_file_name", Some("results 28.json")),
-    ],
-    async { 
-        let args : Vec<&str> = vec!["target/debug/ror1.exe", "-a", "-f", "E:/silly folder name", 
-                                    "-d", "2026-12-25", "-s", "schema2 data.json", "-v", "v1.60"];
+        let args : Vec<&str> = vec!["dummy target", "-z", "-m"];   // one of z, u and one of m, f, s esential
         let test_args = args.iter().map(|x| x.to_string().into()).collect::<Vec<OsString>>();
-        let _res = get_params(test_args).await.unwrap();
-        }
-      ).await;
+
+        let res = get_params(test_args, config_string).unwrap();
+
+        assert_eq!(res.flags.all_mdr, true);
+        assert_eq!(res.flags.use_folder, false);
+        assert_eq!(res.flags.do_zip, true);
+        assert_eq!(res.flags.do_unzip, false);
+        assert_eq!(res.flags.test_run, false);
+        assert_eq!(res.mdr_zipped, PathBuf::from("E:\\MDR\\Zipped source files"));
+        assert_eq!(res.mdr_unzipped, PathBuf::from("E:\\MDR\\MDR Source files"));
+        assert_eq!(res.fdr_zipped, PathBuf::from("E:\\MDR source data\\UMLS\\zipped data"));
+        assert_eq!(res.fdr_unzipped, PathBuf::from("E:\\MDR source data\\UMLS\\data"));
+        assert_eq!(res.log_folder_path, PathBuf::from("E:\\MDR\\Zipping\\logs"));
+        assert_eq!(res.source_list, Vec::<i32>::new());
     }
 
-    #[tokio::test]
-    async fn check_wrong_data_folder_does_not_panic_if_not_r() {
+
+    #[test]
+    fn check_cli_vars_overwrite_env_values() {
+
+    let config = r#"
+[files]
+mdr_zipped="E:\\MDR\\Zipped source files"
+mdr_unzipped="E:\\MDR\\MDR Source files"
+
+fdr_zipped="E:\\MDR source data\\UMLS\\zipped data"
+fdr_unzipped="E:\\MDR source data\\UMLS\\data"
+
+log_folder_path="E:\\MDR\\Zipping\\logs"
+
+[database]
+db_host="localhost"
+db_user="user_name"
+db_password="password"
+db_port="5433"
+db_name="mon"
+"#;
+
+        let config_string = config.to_string();
+        config_reader::populate_config_vars(&config_string).unwrap();
+
+        let args : Vec<&str> = vec!["dummy target", "-z", "-f", 
+                             "--fz", "E:\\MDR source data\\funny\\zipped data", "--fu", "E:\\MDR source data\\funny\\data"];
+        let test_args = args.iter().map(|x| x.to_string().into()).collect::<Vec<OsString>>();
+        
+        let res = get_params(test_args, config_string).unwrap();
+
+        assert_eq!(res.flags.do_zip, true);
+        assert_eq!(res.flags.all_mdr, false);
+        assert_eq!(res.flags.use_folder, true);
+        assert_eq!(res.flags.do_unzip, false);
+        assert_eq!(res.flags.test_run, false);
+        assert_eq!(res.mdr_zipped, PathBuf::from("E:\\MDR\\Zipped source files"));
+        assert_eq!(res.mdr_unzipped, PathBuf::from("E:\\MDR\\MDR Source files"));
+        assert_eq!(res.fdr_zipped, PathBuf::from("E:\\MDR source data\\funny\\zipped data"));
+        assert_eq!(res.fdr_unzipped, PathBuf::from("E:\\MDR source data\\funny\\data"));
+        assert_eq!(res.log_folder_path, PathBuf::from("E:\\MDR\\Zipping\\logs"));
+        assert_eq!(res.source_list, Vec::<i32>::new());
+    }
+
+
+    #[test]
+    fn check_s_value_interpreted_correctly() {
+
+    let config = r#"
+[files]
+mdr_zipped="E:\\MDR\\Zipped source files"
+mdr_unzipped="E:\\MDR\\MDR Source files"
+
+log_folder_path="E:\\MDR\\Zipping\\logs"
+
+[database]
+db_host="localhost"
+db_user="user_name"
+db_password="password"
+db_port="5433"
+db_name="mon"
+"#;
+
+        let config_string = config.to_string();
+        config_reader::populate_config_vars(&config_string).unwrap();
+
+        let args : Vec<&str> = vec!["dummy target", "-z", "-s", "101, 102, 103, 104, 105"];
+        let test_args = args.iter().map(|x| x.to_string().into()).collect::<Vec<OsString>>();
+        
+        let res = get_params(test_args, config_string).unwrap();
+
+        assert_eq!(res.flags.do_zip, true);
+        assert_eq!(res.flags.all_mdr, false);
+        assert_eq!(res.flags.use_folder, false);
+        assert_eq!(res.flags.do_unzip, false);
+        assert_eq!(res.flags.test_run, false);
+        assert_eq!(res.mdr_zipped, PathBuf::from("E:\\MDR\\Zipped source files"));
+        assert_eq!(res.mdr_unzipped, PathBuf::from("E:\\MDR\\MDR Source files"));
+        assert_eq!(res.fdr_zipped, PathBuf::from(""));
+        assert_eq!(res.fdr_unzipped, PathBuf::from(""));
+        assert_eq!(res.log_folder_path, PathBuf::from("E:\\MDR\\Zipping\\logs"));
+        assert_eq!(res.source_list, vec![101, 102, 103, 104, 105]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn check_z_and_u_panics() {
     
-        temp_env::async_with_vars(
-        [
-            ("data_folder_path", Some("E:/ROR/daft data")),
-            ("log_folder_path", Some("E:/ROR/some logs")),
-            ("output_folder_path", Some("E:/ROR/dummy/some outputs")),
-            ("src_file_name", Some("v1.58 20241211.json")),
-            ("data_date", Some("2025-12-11")),
-            ("output_file_name", Some("results 28.json")),
-        ],
-        async { 
-            let args : Vec<&str> = vec!["target/debug/ror1.exe", "-p", "-f", "E:/ROR/silly folder name", 
-                                        "-d", "2026-12-25", "-s", "schema2 data.json", "-v", "v1.60"];
-            let test_args = args.iter().map(|x| x.to_string().into()).collect::<Vec<OsString>>();
-            let res = get_params(test_args).await.unwrap();
-            assert_eq!(res.flags.import_ror, false);
-            assert_eq!(res.flags.process_data, true);
-            assert_eq!(res.flags.export_text, false);
-            assert_eq!(res.flags.create_lookups, false);
-            assert_eq!(res.flags.create_summary, false);
-            assert_eq!(res.data_folder, PathBuf::from("E:/ROR/silly folder name"));
-            assert_eq!(res.log_folder, PathBuf::from("E:/ROR/some logs"));
-            assert_eq!(res.output_folder, PathBuf::from("E:/ROR/dummy/some outputs"));
-            assert_eq!(res.source_file_name, "schema2 data.json");
-            let lt = Local::now().format("%m-%d %H%M%S").to_string();
-            assert_eq!(res.output_file_name, format!("results 28.json at {}.txt", lt));
-            assert_eq!(res.data_version, "v1.60");
-            assert_eq!(res.data_date, "2026-12-25");
+    let config = r#"
+[files]
+mdr_zipped="E:\\MDR\\Zipped source files"
+mdr_unzipped="E:\\MDR\\MDR Source files"
 
-            }
-        ).await;
+log_folder_path="E:\\MDR\\Zipping\\logs"
+
+[database]
+db_host="localhost"
+db_user="user_name"
+db_password="password"
+db_port="5433"
+db_name="mon"
+"#;
+
+        let config_string = config.to_string();
+        config_reader::populate_config_vars(&config_string).unwrap();
+
+        let args : Vec<&str> = vec!["dummy target", "-z", "-u"];
+        let test_args = args.iter().map(|x| x.to_string().into()).collect::<Vec<OsString>>();
+
+        let _res = get_params(test_args, config_string).unwrap();
     }
 
+
+    #[test]
+    #[should_panic]
+    fn check_f_and_m_panics() {
+    
+    let config = r#"
+[files]
+mdr_zipped="E:\\MDR\\Zipped source files"
+mdr_unzipped="E:\\MDR\\MDR Source files"
+
+log_folder_path="E:\\MDR\\Zipping\\logs"
+
+[database]
+db_host="localhost"
+db_user="user_name"
+db_password="password"
+db_port="5433"
+db_name="mon"
+"#;
+
+        let config_string = config.to_string();
+        config_reader::populate_config_vars(&config_string).unwrap();
+
+        let args : Vec<&str> = vec!["dummy target", "-z", "-f", "-m"];
+        let test_args = args.iter().map(|x| x.to_string().into()).collect::<Vec<OsString>>();
+
+        let _res = get_params(test_args, config_string).unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn check_f_and_s_panics() {
+    
+        let config = r#"
+    [files]
+    mdr_zipped="E:\\MDR\\Zipped source files"
+    mdr_unzipped="E:\\MDR\\MDR Source files"
+    
+    fdr_zipped="E:\\MDR source data\\UMLS\\zipped data"
+    fdr_unzipped="E:\\MDR source data\\UMLS\\data"
+    
+    log_folder_path="E:\\MDR\\Zipping\\logs"
+    
+    [database]
+    db_host="localhost"
+    db_user="user_name"
+    db_password="password"
+    db_port="5433"
+    db_name="mon"
+    "#;
+    
+            let config_string = config.to_string();
+            config_reader::populate_config_vars(&config_string).unwrap();
+    
+            let args : Vec<&str> = vec!["dummy target", "-z", "-f", "-s", "101, 102, 103"];
+            let test_args = args.iter().map(|x| x.to_string().into()).collect::<Vec<OsString>>();
+    
+            let _res = get_params(test_args, config_string).unwrap();
+        }
+
+
+    #[test]
+    #[should_panic]
+    fn check_no_z_or_u_panics() {
+    
+    let config = r#"
+[files]
+mdr_zipped="E:\\MDR\\Zipped source files"
+mdr_unzipped="E:\\MDR\\MDR Source files"
+log_folder_path="E:\\MDR\\Zipping\\logs"
+
+[database]
+db_host="localhost"
+db_user="user_name"
+db_password="password"
+db_port="5433"
+db_name="mon"
+"#;
+
+        let config_string = config.to_string();
+        config_reader::populate_config_vars(&config_string).unwrap();
+
+        let args : Vec<&str> = vec!["dummy target", "-m"];
+        let test_args = args.iter().map(|x| x.to_string().into()).collect::<Vec<OsString>>();
+
+        let _res = get_params(test_args, config_string).unwrap();
+    }
+
+
+    #[test]
+    #[should_panic]
+    fn check_no_m_s_or_f_panics() {
+    
+    let config = r#"
+[files]
+mdr_zipped="E:\\MDR\\Zipped source files"
+mdr_unzipped="E:\\MDR\\MDR Source files"
+log_folder_path="E:\\MDR\\Zipping\\logs"
+
+[database]
+db_host="localhost"
+db_user="user_name"
+db_password="password"
+db_port="5433"
+db_name="mon"
+"#;
+
+        let config_string = config.to_string();
+        config_reader::populate_config_vars(&config_string).unwrap();
+
+        let args : Vec<&str> = vec!["dummy target", "-z"];
+        let test_args = args.iter().map(|x| x.to_string().into()).collect::<Vec<OsString>>();
+
+        let _res = get_params(test_args, config_string).unwrap();
+    }
 }
-*/
+

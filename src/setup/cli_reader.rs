@@ -1,5 +1,5 @@
 use clap::{command, Arg, ArgMatches};
-use crate::error_defs::{CustomError, AppError};
+use crate::err::AppError;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -40,10 +40,14 @@ pub fn fetch_valid_arguments(args: Vec<OsString>) -> Result<CliPars, AppError>
     let f_flag = parse_result.get_flag("f_flag");
     let t_flag = parse_result.get_flag("t_flag");
 
-    if z_flag && u_flag {   // both set do nothing and report as error
-        let msg = "Both zip and unzip requested at the same time! Unable to proceed.";
-        let cf_err = CustomError::new(msg);
-        return Result::Err(AppError::CsErr(cf_err));
+    if z_flag && u_flag {   // both set - do nothing and report as error
+        let msg = "Both zip and unzip have been requested at the same time!".to_string();
+        return Result::Err(AppError::InconsistentProgramParameter(msg));
+    }
+
+    if !z_flag && !u_flag {   // neither set  - do nothing and report as error
+        let msg = "Neither zip or unzip have been requested!".to_string();
+        return Result::Err(AppError::InconsistentProgramParameter(msg));
     }
 
     let flags = Flags {
@@ -63,7 +67,7 @@ pub fn fetch_valid_arguments(args: Vec<OsString>) -> Result<CliPars, AppError>
 }
 
 
-fn parse_args(args: Vec<OsString>) -> Result<ArgMatches, clap::Error> {
+fn parse_args(args: Vec<OsString>) -> Result<ArgMatches, AppError> {
 
     command!()
         .about("Imports data from ROR json file (v2) and imports it into a database")
@@ -129,8 +133,8 @@ fn parse_args(args: Vec<OsString>) -> Result<ArgMatches, clap::Error> {
             .help("A flag signifying that this is part of an integration test run - suppresses logs")
             .action(clap::ArgAction::SetTrue)
        )
-    .try_get_matches_from(args)
-
+       .try_get_matches_from(args)
+       .map_err(|e| AppError::ClapError(e))
 }
 
 
@@ -141,15 +145,15 @@ mod tests {
     // Ensure the parameters are being correctly extracted from the CLI arguments
 
     #[test]
-    fn check_cli_no_explicit_params() {
-        let target = "dummy target";
-        let args : Vec<&str> = vec![target];
+    fn check_cli_no_minimal_params() {
+        let target = "dummy target";  
+        let args : Vec<&str> = vec![target, "-z"];   // one of z or u essential
         let test_args = args.iter().map(|x| x.to_string().into()).collect::<Vec<OsString>>();
         let res = fetch_valid_arguments(test_args).unwrap();
         assert_eq!(res.source_list, "");
         assert_eq!(res.fz_folder, PathBuf::new());
         assert_eq!(res.fu_folder, PathBuf::new());
-        assert_eq!(res.flags.do_zip, false);
+        assert_eq!(res.flags.do_zip, true);
         assert_eq!(res.flags.do_unzip, false);
         assert_eq!(res.flags.all_mdr, false);
         assert_eq!(res.flags.use_folder, false);

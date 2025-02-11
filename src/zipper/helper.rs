@@ -1,10 +1,11 @@
-use std::path::PathBuf;
+//use std::path::PathBuf;
 //use std::fs;
-use crate::error_defs::AppError;
+//use crate::err::AppError;
 //use crate::SourceDetails;
-use chrono::Local;
+//use chrono::Local;
 
 
+/* 
 fn zip_mdr_files_in_single_folder() -> Result<(), AppError> {
 
    /*
@@ -73,7 +74,7 @@ fn zip_files(file_list: Vec<String>, zip_folder_path: &PathBuf, file_name_stem: 
     Ok(file_num)
  
  }
- 
+ */
 
 /*
 

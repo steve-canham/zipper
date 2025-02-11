@@ -2,7 +2,7 @@ mod helper;
 
 use std::path::PathBuf;
 use std::fs;
-use crate::error_defs::{AppError, CustomError};
+use crate::err::AppError;
 use crate::SourceDetails;
 
 pub fn unzip_folder(zipped_source: &PathBuf, unzipped_destination: &PathBuf) -> Result<i32, AppError>{
@@ -11,9 +11,9 @@ pub fn unzip_folder(zipped_source: &PathBuf, unzipped_destination: &PathBuf) -> 
 
     if !folder_exists(zipped_source) 
     {
-        let msg = "Source folder does not appear to exist - aborting unzip";
-        let cf_err = CustomError::new(msg);
-        return Result::Err(AppError::CsErr(cf_err));
+        let problem = "There is a problem accessing a designated folder or file".to_string();
+        let detail = "Source folder (of zipped files) does not appear to exist.".to_string();
+        return Result::Err(AppError::FileSystemError(problem, detail));
     }
     if !folder_exists(unzipped_destination) 
     {
