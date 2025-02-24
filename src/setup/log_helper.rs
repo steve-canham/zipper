@@ -71,11 +71,11 @@ pub fn log_startup_params (ip : &InitParams) {
     info!("");
     info!("************************************");
     info!("");
-    info!("data_folder: {}", ip.mdr_zipped.display());
-    info!("log_folder: {}", ip.mdr_unzipped.display());
-    info!("output_folder: {}", ip.fdr_zipped.display());
-    info!("source_file_name: {}", ip.fdr_unzipped.display());
-    info!("output_file_name: {}", ip.log_folder_path.display());
+    info!("mdr zipped folder: {}", ip.mdr_zipped.display());
+    info!("mdr unzipped folder: {}", ip.mdr_unzipped.display());
+    info!("fdr zipped folder: {}", ip.fdr_zipped.display());
+    info!("fdr unzipped folder: {}", ip.fdr_unzipped.display());
+    info!("log folder: {}", ip.log_folder_path.display());
     info!("do zip: {}", ip.flags.do_zip);
     info!("do_unzip: {}", ip.flags.do_unzip);
     info!("all_mdr: {}", ip.flags.all_mdr);

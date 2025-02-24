@@ -9,12 +9,12 @@ use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
 pub struct TomlConfig {
-    pub files: Option<TomlFilePars>, 
+    pub folders: Option<TomlFolderPars>, 
     pub database: Option<TomlDBPars>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct TomlFilePars {
+pub struct TomlFolderPars {
     pub mdr_zipped: Option<String>,
     pub mdr_unzipped: Option<String>,
     pub fdr_zipped: Option<String>,
@@ -34,11 +34,11 @@ pub struct TomlDBPars {
 // Following 3 structs used in the generation of the config parameters
 
 pub struct Config {
-    pub files: FilePars, 
+    pub folders: FolderPars, 
     pub db_pars: DBPars,
 }
 
-pub struct FilePars {
+pub struct FolderPars {
     pub mdr_zipped: PathBuf,
     pub mdr_unzipped: PathBuf,
     pub fdr_zipped: PathBuf,
@@ -71,33 +71,33 @@ pub fn populate_config_vars(config_string: &String) -> Result<Config, AppError> 
             "Cannot find a section called '[database]'.".to_string()))},
     };
 
-    let toml_files = match toml_config.files {
+    let toml_folders = match toml_config.folders {
         Some(f) => f,
         None => {return Result::Err(AppError::ConfigurationError("Missing or misspelt configuration section.".to_string(),
             "Cannot find a section called '[files]'.".to_string()))},
     };
    
-    let config_files = verify_file_parameters(toml_files)?;
+    let config_folders = verify_file_parameters(toml_folders)?;
     let config_db_pars = verify_db_parameters(toml_database)?;
    
     let _ = DB_PARS.set(config_db_pars.clone());
 
     Ok(Config{
-        files: config_files,
+        folders: config_folders,
         db_pars: config_db_pars,
     })
 }
 
 
-fn verify_file_parameters(toml_files: TomlFilePars) -> Result<FilePars, AppError> {
+fn verify_file_parameters(toml_folders: TomlFolderPars) -> Result<FolderPars, AppError> {
 
-    let mdr_zipped_string = check_essential_string (toml_files.mdr_zipped, "mdr zipped folder", "mdr_zipped")?; 
-    let mdr_unzipped_string = check_essential_string (toml_files.mdr_unzipped, "mdr unzipped folder", "mdr_unzipped")?;
-    let fdr_zipped_string = check_defaulted_string (toml_files.fdr_zipped, "fdr zipped folder", "empty string", "");
-    let fdr_unzipped_string = check_defaulted_string (toml_files.fdr_unzipped, "fdr unzipped folder", "empty string", "");
-    let log_folder_string = check_essential_string (toml_files.log_folder_path, "log folder", "log_folder_path")?;
+    let mdr_zipped_string = check_essential_string (toml_folders.mdr_zipped, "mdr zipped folder", "mdr_zipped")?; 
+    let mdr_unzipped_string = check_essential_string (toml_folders.mdr_unzipped, "mdr unzipped folder", "mdr_unzipped")?;
+    let fdr_zipped_string = check_defaulted_string (toml_folders.fdr_zipped, "fdr zipped folder", "empty string", "");
+    let fdr_unzipped_string = check_defaulted_string (toml_folders.fdr_unzipped, "fdr unzipped folder", "empty string", "");
+    let log_folder_string = check_essential_string (toml_folders.log_folder_path, "log folder", "log_folder_path")?;
 
-    Ok(FilePars {
+    Ok(FolderPars {
         mdr_zipped: PathBuf::from(mdr_zipped_string),
         mdr_unzipped: PathBuf::from(mdr_unzipped_string),
         fdr_zipped: PathBuf::from(fdr_zipped_string),
@@ -202,7 +202,7 @@ mod tests {
     fn check_config_with_all_params_present() {
 
         let config = r#"
-[files]
+[folders]
 mdr_zipped="E:\\MDR\\Zipped source files"
 mdr_unzipped="E:\\MDR\\MDR Source files"
 fdr_zipped="E:\\MDR source data\\UMLS\\zipped data"
@@ -218,11 +218,11 @@ db_name="geo"
 "#;
         let config_string = config.to_string();
         let res = populate_config_vars(&config_string).unwrap();
-        assert_eq!(res.files.mdr_zipped, PathBuf::from("E:\\MDR\\Zipped source files"));
-        assert_eq!(res.files.mdr_unzipped, PathBuf::from("E:\\MDR\\MDR Source files"));
-        assert_eq!(res.files.fdr_zipped, PathBuf::from("E:\\MDR source data\\UMLS\\zipped data"));
-        assert_eq!(res.files.fdr_unzipped, PathBuf::from("E:\\MDR source data\\UMLS\\data"));
-        assert_eq!(res.files.log_folder_path, PathBuf::from("E:\\MDR\\Zipping\\logs"));
+        assert_eq!(res.folders.mdr_zipped, PathBuf::from("E:\\MDR\\Zipped source files"));
+        assert_eq!(res.folders.mdr_unzipped, PathBuf::from("E:\\MDR\\MDR Source files"));
+        assert_eq!(res.folders.fdr_zipped, PathBuf::from("E:\\MDR source data\\UMLS\\zipped data"));
+        assert_eq!(res.folders.fdr_unzipped, PathBuf::from("E:\\MDR source data\\UMLS\\data"));
+        assert_eq!(res.folders.log_folder_path, PathBuf::from("E:\\MDR\\Zipping\\logs"));
 
         assert_eq!(res.db_pars.db_host, "localhost");
         assert_eq!(res.db_pars.db_user, "user_name");
@@ -236,7 +236,7 @@ db_name="geo"
     fn check_missing_user_name_panics() {
 
         let config = r#"
-[files]
+[folders]
 mdr_zipped="E:\\MDR\\Zipped source files"
 mdr_unzipped="E:\\MDR\\MDR Source files"
 fdr_zipped="E:\\MDR source data\\UMLS\\zipped data"
@@ -259,7 +259,7 @@ db_name="geo"
     fn check_missing_user_password_panics() {
 
         let config = r#"
-[files]
+[folders]
 mdr_zipped="E:\\MDR\\Zipped source files"
 mdr_unzipped="E:\\MDR\\MDR Source files"
 fdr_zipped="E:\\MDR source data\\UMLS\\zipped data"
@@ -281,7 +281,7 @@ db_name="geo"
     fn check_db_defaults_are_supplied() {
 
         let config = r#"
-[files]
+[folders]
 mdr_zipped="E:\\MDR\\Zipped source files"
 mdr_unzipped="E:\\MDR\\MDR Source files"
 fdr_zipped="E:\\MDR source data\\UMLS\\zipped data"
@@ -306,7 +306,7 @@ db_password="password"
     fn check_missing_port_gets_default() {
 
         let config = r#"
-[files]
+[folders]
 mdr_zipped="E:\\MDR\\Zipped source files"
 mdr_unzipped="E:\\MDR\\MDR Source files"
 fdr_zipped="E:\\MDR source data\\UMLS\\zipped data"

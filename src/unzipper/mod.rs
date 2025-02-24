@@ -1,99 +1,85 @@
-mod helper;
-
 use std::path::PathBuf;
 use std::fs;
+use log::info;
 use crate::err::AppError;
 use crate::SourceDetails;
+use std::fs::File;
+use zip::ZipArchive;
+use zip_extensions::read::zip_extract;
 
-pub fn unzip_folder(zipped_source: &PathBuf, unzipped_destination: &PathBuf) -> Result<i32, AppError>{
+pub fn unzip_folder(zipped_source: &PathBuf, unzipped_destination: &PathBuf) -> Result<usize, AppError>{
 
-    // check source folder exists, destination can be creted if necessary.
+    // check source folder exists, destination can be created if necessary.
 
-    if !folder_exists(zipped_source) 
+    if !file_exists(zipped_source) 
     {
         let problem = "There is a problem accessing a designated folder or file".to_string();
         let detail = "Source folder (of zipped files) does not appear to exist.".to_string();
         return Result::Err(AppError::FileSystemError(problem, detail));
     }
-    if !folder_exists(unzipped_destination) 
-    {
-        fs::create_dir_all(unzipped_destination)?;
+
+    let file = File::open(&zipped_source)?;
+    let archive = ZipArchive::new(file)
+            .map_err(|e| AppError::UnzipError(e, unzipped_destination.to_owned()))?;
+
+    zip_extract(zipped_source, unzipped_destination)
+            .map_err(|e| AppError::UnzipError(e, unzipped_destination.to_owned()))?;
+
+    Ok(archive.len())
+}
+
+pub fn unzip_mdr_folder(source: SourceDetails, parent_zipped_src_fdr: &PathBuf, parent_unzipped_dest_fdr: &PathBuf) -> Result<usize, AppError> {
+
+    // both source and destination PARENT folders already confirmed to exist
+
+    let database_name = PathBuf::from(source.database_name);
+    if database_name == PathBuf::from("".to_string()) {
+        let p = "No database name in Source details".to_string();
+        let d = "Unable to unzip correspondig archive".to_string();
+        return Err(AppError::FileSystemError(p, d));
     }
 
-    Ok(1)
+    let srce_folder: PathBuf = [parent_zipped_src_fdr, &database_name].iter().collect();
+    let dest_folder: PathBuf = [parent_unzipped_dest_fdr, &database_name].iter().collect();
+
+    info!("Unzipping files from {:?} to {:?}", srce_folder, dest_folder);
+    
+    // get each zip file in the source folder... (each source has one or more zip files in the associated folder)
+    // Files are arranged in a single list, with no hierarchy of folders within each source's folder.
+    // ?? No need to delete existing files in dest folder
+
+    let entries = fs::read_dir(&srce_folder)
+                .map_err(|e| AppError::IoReadErrorWithPath(e, srce_folder))?;
+
+    let mut file_num = 0;
+
+    for e in entries {
+         let src_path = e?.path();
+         info!("source path is {:?}", src_path);
+         if src_path.is_file() {
+            match src_path.extension() {
+                Some(s) => {
+                    if s == PathBuf::from("zip") {
+                        file_num += unzip_folder(&src_path, &dest_folder)?
+                    } 
+                    else {
+                        continue;
+                    }
+                },
+                None => continue, 
+            };
+        }
+    }
+    
+    Ok(file_num)
 }
 
-pub fn unzip_mdr_folder(_source: SourceDetails, _parent_zipped_src_fdr: &PathBuf, _parent_unzipped_dest_fdr: &PathBuf) -> Result<i32, AppError> {
 
-    // both source and destination parent folders already confirmed to exist
-    Ok(1)
-}
-
-
-fn folder_exists(folder_name: &PathBuf) -> bool {
-    let xres = folder_name.try_exists();
-    let res = match xres {
+fn file_exists(file_path: &PathBuf) -> bool {
+    let xres = file_path.try_exists();
+    match xres {
         Ok(true) => true,
         Ok(false) => false, 
         Err(_e) => false,           
-    };
-    res
-}
-
-/*
-
-internal void UnZipFiles(Options opts)
-    {
-        _loggingHelper.LogHeader("Setup");
-        _loggingHelper.LogCommandLineParameters(opts);
-
-        if (opts.SourceIds is not null && opts.SourceIds.Any())
-        {
-            // If the zipping is MDR file based there will be a list of source ids.
-            // For each set up the folder to receive the unzipped file(s), then call the
-            // relevant routine - unzipping into either a single folder of source files or 
-            // a folder of source folders, each with a group of xml files
-
-            foreach (int source_id in opts.SourceIds)
-            {
-                Source s = _dataLayer.FetchSourceParameters(source_id);
-                if (s.database_name is not null)
-                {
-                    string zipped_parent_path = Path.Combine(opts.ZippedParentFolderPath!, s.database_name);
-                    string unzipped_parent_path = Path.Combine(opts.UnzippedParentFolderPath!, s.database_name);
-                    if (Directory.Exists(unzipped_parent_path))
-                    {
-                        string[] filePaths = Directory.GetFiles(unzipped_parent_path);
-                        foreach (string filePath in filePaths)
-                        {
-                            File.Delete(filePath);
-                        }
-                    }
-                    else
-                    {
-                        Directory.CreateDirectory(unzipped_parent_path);
-                    }
-
-                    _loggingHelper.LogLine("Unzipping files from " + s.database_name);
-                    int num = (s.local_files_grouped == true)
-                        ? _uzh.UnzipMdrFilesIntoMultipleFolders(s.grouping_range_by_id, zipped_parent_path, unzipped_parent_path)
-                        : _uzh.UnzipMdrFilesIntoSingleFolder(zipped_parent_path, unzipped_parent_path);
-
-                    _loggingHelper.LogLine("Unzipped " + num.ToString() + " zip files from " + s.database_name);
-                }
-            }
-        }
-
-        
-        if (opts.UseFolder == true)
-        {
-            // If the unzipping is folder based (can be any folder) call the routine
-            // with the source and destination path (if any) derived from options.
-
-            _uzh.UnzipFolder(opts.ZippedParentFolderPath!, opts.UnzippedParentFolderPath!);
-        }
-
-        _loggingHelper.CloseLog();
     }
-
- */
+}

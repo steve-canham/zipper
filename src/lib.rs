@@ -4,14 +4,11 @@ mod data;
 mod zipper;
 mod unzipper;
 
-use std::sync::OnceLock;
+use setup::cli_reader;
 use err::AppError;
-use setup::log_helper;
 use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
-
-pub static LOG_RUNNING: OnceLock<bool> = OnceLock::new();
 
 #[derive(sqlx::FromRow)]
 pub struct SourceDetails {
@@ -24,18 +21,21 @@ pub struct SourceDetails {
 
 pub async fn run(args: Vec<OsString>) -> Result<(), AppError> {
 
+    // Establish program parameters, and thus tasks to do
+
+    let cli_pars: cli_reader::CliPars;
+    cli_pars = cli_reader::fetch_valid_arguments(args)?;
+
     let config_file = PathBuf::from("./app_config.toml");
     let config_string: String = fs::read_to_string(&config_file)
                     .map_err(|e| AppError::IoReadErrorWithPath(e, config_file))?;
     
-    let params = setup::get_params(args, config_string)?;
+    let params = setup::get_params(cli_pars, &config_string)?;
     let flags = params.flags;
     let test_run = flags.test_run;
 
     if !test_run {
-       log_helper::setup_log(&params.log_folder_path)?;
-       LOG_RUNNING.set(true).unwrap();   // no other thread - therefore should always work
-       log_helper::log_startup_params(&params);
+        setup::establish_log(&params)?;
     }
     
     let pool = setup::get_db_pool().await?;
@@ -54,16 +54,16 @@ pub async fn run(args: Vec<OsString>) -> Result<(), AppError> {
 
         let mut source_list = params.source_list;
         if flags.all_mdr {
-            source_list = data::get_all_ids(&pool).await?;  // get alll ids
+            source_list = data::get_all_ids(&pool).await?;  // get all ids
         }
 
         for source_id in source_list.clone() {
             let source_dets = data::get_source_details(source_id, &pool).await?;
             if flags.do_zip {
-                zipper::zip_mdr_folder(source_dets, &params.fdr_unzipped, &params.fdr_zipped)?;
+                zipper::zip_mdr_folder(source_dets, &params.mdr_unzipped, &params.mdr_zipped)?;
             }
             else {
-                unzipper::unzip_mdr_folder(source_dets, &params.fdr_unzipped, &params.fdr_zipped)?;
+                unzipper::unzip_mdr_folder(source_dets, &params.mdr_zipped, &params.mdr_unzipped)?;
             }
         }      
     }

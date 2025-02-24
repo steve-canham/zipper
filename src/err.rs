@@ -1,7 +1,8 @@
 
-use crate::LOG_RUNNING;
+use crate::setup::log_set_up;
 use thiserror::Error;
 use log::error;
+use zip::result::ZipError;
 
 
 // The error types used within the program.
@@ -26,6 +27,12 @@ pub enum AppError {
 
     #[error("couldn't write file {1:?}")]
     IoWriteErrorWithPath(#[source] std::io::Error, std::path::PathBuf,),
+
+    #[error("couldn't write archive file {1:?}")]
+    ZipError(#[source] ZipError, std::path::PathBuf,),
+
+    #[error("couldn't extract archive file {1:?}")]
+    UnzipError(#[source] ZipError, std::path::PathBuf,),
 
     #[error("Problem accessing folder or file")]
     FileSystemError(String, String),
@@ -77,6 +84,12 @@ pub fn report_error(e: AppError) -> () {
         AppError::IoWriteErrorWithPath(e, p) => print_error (e.to_string(), 
                   "Path was: ".to_string() + p.to_str().unwrap(), "FILE WRITING PROBLEM"),
 
+        AppError::ZipError(e, p) => print_error (e.to_string(), 
+                  "Path was: ".to_string() + p.to_str().unwrap(), "ZIP ARCHIVING PROBLEM"),
+
+        AppError::UnzipError(e, p) => print_error (e.to_string(), 
+                  "Path was: ".to_string() + p.to_str().unwrap(), "UNZIPPING PROBLEM"),
+
         AppError::FileSystemError(p, d) => print_error (p, d, "FILE SYSTEM PROBLEM"),
         
         AppError::SerdeError(e) => print_error ("Error occureed when parsing JSON file".to_string(), 
@@ -123,7 +136,7 @@ fn output_error (err_output: String) {
 
     eprint!("{}", err_output);
 
-    if LOG_RUNNING.get().is_some(){
+    if log_set_up(){
         error!("{}", err_output);
     }
 
