@@ -1,5 +1,3 @@
-mod helper;
-
 use std::io::Read;
 use std::io::Write;
 use std::path::PathBuf;
@@ -18,7 +16,7 @@ use std::io::copy;
 pub fn zip_folder(unzipped_source_folder: &PathBuf, zipped_destination_file: &PathBuf) -> Result<(), AppError> {
    
     // Used with -f. Zips all of the folder. 
-    // Check source folder exists, destination zip file can be created if necessary .
+    // Check source folder exists, destination zip file will be created if necessary .
 
     if !folder_exists(unzipped_source_folder) 
     {
@@ -53,6 +51,13 @@ pub fn zip_mdr_folder(source: SourceDetails, parent_unzipped_src_fdr: &PathBuf, 
 
     info!("Zipping files from {:?} to {:?}", srce_folder, dest_folder);
 
+    // Ensure dest folder exists 
+
+    if !folder_exists(&dest_folder) {
+        fs::create_dir_all(&dest_folder)?;
+    }
+    
+
     if source.local_files_grouped {
         zip_mdr_files_in_multiple_folders(&database_name, &srce_folder, &dest_folder)
     }
@@ -76,72 +81,58 @@ fn zip_mdr_files_in_single_folder(database_name: &String, srce_folder: &PathBuf,
         return Ok(0);
     }
 
+    // Set up constants to be used within the loop.
+
     let today = Local::now().format("%y%m%d").to_string();
-    let file_name_stem = format!("{} {} ", database_name, today);
+    let file_name_stem = format!("{} {}", database_name, today);
     let files_per_zip = 10000;
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
-    let mut i = 0;
-    let mut j = 0;
+
+    // initialise these mutable variables used within the loop
     
-    // initialise first zip file
-
-    let start_file ="1";
-    let mut end_file_num = files_per_zip;
-    if end_file_num >= file_num {
-        end_file_num = file_num;
-    }
-    let end_file = end_file_num.to_string();
-
-    let mut zip_file_name = format!("{} {} to {}.zip", file_name_stem, start_file, end_file);
-    let mut zip_file_path: PathBuf = [dest_folder, &PathBuf::from(zip_file_name)].iter().collect(); 
+    let mut zip_file_name: String;
+    let mut zip_file_path = paths[0].clone(); 
     let mut zip_file = File::create(&zip_file_path)?;
     let mut zip = ZipWriter::new(zip_file); 
 
+    let mut i = 0;
+    let mut j = 0;
+
     for p in paths {
+        
+        if j == 0 {    // New zip file required?
 
-        // New zip file required?
+            if i != 0 {
 
-        if j == 0 && i != 0 {
-            
-            zip.finish()        // complete previous zip
-                .map_err(|e| AppError::ZipError(e, zip_file_path.to_owned()))?;
-            info!("{:?} archive created from {} files", zip_file_path, files_per_zip);
-       
+                zip.finish()        // complete previous zip
+                    .map_err(|e| AppError::ZipError(e, zip_file_path.to_owned()))?;
+
+                info!("{:?} archive created from {} files", zip_file_path, files_per_zip);
+            }
+
             let start_file = (i + 1).to_string();
             let mut end_file_num = i + files_per_zip;
             if end_file_num >= file_num {
                 end_file_num = file_num;
             }
             let end_file = end_file_num.to_string();
-        
+            
             zip_file_name = format!("{} {} to {}.zip", file_name_stem, start_file, end_file);
             zip_file_path = [dest_folder, &PathBuf::from(zip_file_name)].iter().collect(); 
             zip_file = File::create(&zip_file_path)?;
             zip = ZipWriter::new(zip_file); 
+
         }
 
         let file = File::open(&p)?;
-        let file_name = match p.file_name() {
-                Some(oss) => { 
-                    match oss.to_str() {
-                    Some(filename) => filename,
-                    None => return Err(AppError::FileSystemError("Error when extracting file name from path".to_string(), 
-                            "Could not turn OsStr to string".to_string())),
-                        }
-                },
-                None => return Err(AppError::FileSystemError("Error when extracting file name from path".to_string(), 
-                         "Could not read file name as OsStr".to_string()))
-            };
-
-            
+        let file_name = get_f_name(&p)?;
+        
         // Adding the file to the ZIP archive.
 
         zip.start_file(file_name, options)
                 .map_err(|e| AppError::ZipError(e, p.to_owned()))?;
-
         let mut buffer = Vec::new();
         copy(&mut file.take(u64::MAX), &mut buffer)?;
-        
         zip.write_all(&buffer)?;
 
         i += 1;
@@ -155,18 +146,16 @@ fn zip_mdr_files_in_single_folder(database_name: &String, srce_folder: &PathBuf,
         .map_err(|e| AppError::ZipError(e, zip_file_path.to_owned()))?;
 
     info!("{} files zipped in total", i);
-
     
     Ok(file_num)
  
  }
 
 
- fn zip_mdr_files_in_multiple_folders(database_name: &String, srce_folder: &PathBuf, dest_folder: &PathBuf) -> Result<usize, AppError> {
+fn zip_mdr_files_in_multiple_folders(database_name: &String, srce_folder: &PathBuf, dest_folder: &PathBuf) -> Result<usize, AppError> {
 
     let folder_list = fs::read_dir(srce_folder)
         .map_err(|e| AppError::IoReadErrorWithPath(e, srce_folder.to_owned()))?;
-
     let folders: Vec<PathBuf> = folder_list
         .filter_map(|entry| Some(entry.ok()?.path()))
         .collect();
@@ -175,88 +164,116 @@ fn zip_mdr_files_in_single_folder(database_name: &String, srce_folder: &PathBuf,
     if folder_num == 0 {
         return Ok(0);
     }
+
+    // Set up constants to be used within the loop.
    
     let today = Local::now().format("%y%m%d").to_string();
-    let file_name_stem = format!("{} {} ", database_name, today);
+    let file_name_stem = format!("{} {}", database_name, today);
     let min_files_per_zip = 10000;
-    //let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+  
+    // initialise these mutable variables used within the loop
+    // The first three variables are needed to create a file (which will be overwritten)
+    // so that a mutable ZipWriter can be created.
 
-    //let mut source_folder= "".to_string();
-    //let mut source_file_path= "".to_string();
-    //let mut folder_name= "".to_string();
-    //let mut entry_name= "".to_string();
-    //let mut last_used_folder_name = "".to_string();
+    let initial_folder = &folders[0].clone();
+    let initial_folder_name = get_f_name(&initial_folder)?.to_string();
+    let zip_file_name = format!("{} {} to .zip", file_name_stem, initial_folder_name);
+
+    let mut zip_file_path: PathBuf = [dest_folder, &PathBuf::from(&zip_file_name)].iter().collect(); 
+    let mut zip_file = File::create(&zip_file_path)?;
+    let mut curr_zip = ZipWriter::new(zip_file); 
+
+    let mut zip_file_name: String;
+    let mut folder_name = "".to_string();
+    let mut initial_folder = "".to_string();
+    let mut last_folder_name = "".to_string();
 
     // Produce a zip for each group of folders, checking that the max size has
     // not been exceeded after each folder.
-
+    
     let mut i = 0;  // accumulative total of files zipped, overall
     let mut j = 0;  // accumulative total of files zipped in the current zip file
-    
-    // Set up initial zip file
-    let start_file = (i + 1).to_string();
-    let end_file = "...".to_string();
-
-    let mut zip_file_name = format!("{} {} to {}.zip", file_name_stem, start_file, end_file);
-    let mut zip_file_path: PathBuf = [dest_folder, &PathBuf::from(zip_file_name)].iter().collect(); 
-    let mut zip_file = File::create(&zip_file_path)?;
-    let mut zip = ZipWriter::new(zip_file); 
 
     for f in folders {
 
-        let _folder_name = match f.file_name() {
-            Some(oss) => { 
-                match oss.to_str() {
-                Some(filename) => filename,
-                None => return Err(AppError::FileSystemError("Error when extracting folder name from path".to_string(), 
-                        "Could not turn OsStr to string".to_string())),
-                    }
-            },
-            None => return Err(AppError::FileSystemError("Error when extracting folder name from path".to_string(), 
-                     "Could not read file name as OsStr".to_string()))
-        };
+        folder_name = get_f_name(&f)?.to_string();
 
+        if j == 0 {
 
-        if j == 0 && i != 0 {
+            if i != 0 {
 
-            //***** Finish off old zip - restart with new ***************
-            // rename last zip to reflect last folder added
+                // ***** Finish off old zip - restart with new ***************
+                // rename last zip to reflect last folder added
+                 
+                curr_zip.finish()        // complete previous zip
+                    .map_err(|e| AppError::ZipError(e, zip_file_path.to_owned()))?;
 
-            zip.finish()        // complete previous zip
-                .map_err(|e| AppError::ZipError(e, zip_file_path.to_owned()))?;
+                let new_zip_file_name = format!("{} {} to {}.zip", file_name_stem, initial_folder, last_folder_name);
+                let new_zip_file_path: PathBuf = [dest_folder, &PathBuf::from(&new_zip_file_name)].iter().collect(); 
+                std::fs::rename(&zip_file_path, &new_zip_file_path)?;
+                info!("{:?} archive created; {} files zipped so far", new_zip_file_path, i);
+            }
 
-            //info!("{:?} archive created from {} files", zip_file_path, files_per_zip);
-        
-            // create next zip file
+            // ***** Create next (or first) zip file ***************************
 
-            let start_file = (i + 1).to_string();
-            let end_file = "...".to_string();
-        
-            zip_file_name = format!("{} {} to {}.zip", file_name_stem, start_file, end_file);
-            zip_file_path = [dest_folder, &PathBuf::from(zip_file_name)].iter().collect(); 
+            initial_folder = folder_name.clone();
+            zip_file_name = format!("{} {} to .zip", file_name_stem, initial_folder);
+            zip_file_path = [dest_folder, &PathBuf::from(&zip_file_name)].iter().collect(); 
             zip_file = File::create(&zip_file_path)?;
-            zip = ZipWriter::new(zip_file); 
+            curr_zip = ZipWriter::new(zip_file); 
+        }
+        
+        //********************************************************************** 
+        // Add the current folder's files to the zip archive, retaining the 
+        // folder structure by including the folder name in the 'file name'.
+
+        let file_list = fs::read_dir(&f)
+            .map_err(|e| AppError::IoReadErrorWithPath(e, srce_folder.to_owned()))?;
+
+        let paths: Vec<PathBuf> = file_list
+        .filter_map(|entry| Some(entry.ok()?.path()))
+        .collect();
+
+        let mut m = 0;
+        for p in paths {
+
+            let file = File::open(&p)?;
+            let file_name = format!("{}/{}", &folder_name, get_f_name(&p)?);
+    
+            curr_zip.start_file(file_name, options)
+                    .map_err(|e| AppError::ZipError(e, p.to_owned()))?;
+            let mut buffer = Vec::new();
+            copy(&mut file.take(u64::MAX), &mut buffer)?;
+            
+            curr_zip.write_all(&buffer)?;
+    
+            m += 1;
         }
 
-        // add the folder to the zip archive
-              
-        //********************************************************* 
-        // zip the contents of this folder to the current zip file
-        //*********************************************************
+        //***********************************************************************  
 
-        let number_in_last_folder = 10;  // from adding the files of the last folder to the current zip
+        i += m;
+        j += m;
 
-        i += number_in_last_folder;
-        j += number_in_last_folder;
         if j >= min_files_per_zip {
             j = 0;
+            last_folder_name = folder_name.clone();
         }
     }
+
+    curr_zip.finish()        // complete last zip
+          .map_err(|e| AppError::ZipError(e, zip_file_path.to_owned()))?;
+
+    last_folder_name = folder_name.clone();
+    let new_zip_file_name = format!("{} {} to {}.zip", file_name_stem, initial_folder, last_folder_name);
+    let new_zip_file_path: PathBuf = [dest_folder, &PathBuf::from(&new_zip_file_name)].iter().collect(); 
+    std::fs::rename(&zip_file_path, &new_zip_file_path)?;
+    info!("{:?} archive created; {} files zipped so far", new_zip_file_path, i);
 
     Ok(folder_num)
 }
 
-    
 
 fn folder_exists(folder_name: &PathBuf) -> bool {
     let xres = folder_name.try_exists();
@@ -267,4 +284,21 @@ fn folder_exists(folder_name: &PathBuf) -> bool {
     };
     res
 }
+
+
+fn get_f_name(path: &PathBuf) -> Result<&str, AppError> {
+
+    match path.file_name() {
+        Some(oss) => { 
+            match oss.to_str() {
+            Some(filename) => Ok(filename),
+            None => return Err(AppError::FileSystemError("Error when extracting folder name from path".to_string(), 
+                    "Could not turn OsStr to string".to_string())),
+                }
+        },
+        None => return Err(AppError::FileSystemError("Error when extracting folder name from path".to_string(), 
+                "Could not read file name as OsStr".to_string())),
+    }
+}
+
 

@@ -7,6 +7,9 @@ one common set of commands involves selecting all or some of those data folders 
 
 In addition, a specified folder can also be zipped or unzipped to or from a specified folder.
 
+Note that the MDR files are stored as either a single folder of files, for most sources, or as a collection of folders, for a few sources.
+Zipping and unzipping these files assumes and takes advantage of this relatively simple structure, with no or a single level of folder hierarchy respectively.
+
 <h2>Configuration</h2>
 An app_config.toml file must be present, in the same folder as cargo.toml. It should have theb structure below:<br/>
 <br/>

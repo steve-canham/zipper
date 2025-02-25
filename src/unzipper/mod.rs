@@ -18,12 +18,9 @@ pub fn unzip_folder(zipped_source: &PathBuf, unzipped_destination: &PathBuf) -> 
         return Result::Err(AppError::FileSystemError(problem, detail));
     }
 
-
     let file = File::open(&zipped_source)?;
     let archive = ZipArchive::new(file)
             .map_err(|e| AppError::UnzipError(e, unzipped_destination.to_owned()))?;
-
-    info!("Unzipping files from {:?} to {:?}", zipped_source, unzipped_destination);
 
     zip_extract(zipped_source, unzipped_destination)
             .map_err(|e| AppError::UnzipError(e, unzipped_destination.to_owned()))?;
