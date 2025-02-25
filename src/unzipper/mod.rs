@@ -18,9 +18,12 @@ pub fn unzip_folder(zipped_source: &PathBuf, unzipped_destination: &PathBuf) -> 
         return Result::Err(AppError::FileSystemError(problem, detail));
     }
 
+
     let file = File::open(&zipped_source)?;
     let archive = ZipArchive::new(file)
             .map_err(|e| AppError::UnzipError(e, unzipped_destination.to_owned()))?;
+
+    info!("Unzipping files from {:?} to {:?}", zipped_source, unzipped_destination);
 
     zip_extract(zipped_source, unzipped_destination)
             .map_err(|e| AppError::UnzipError(e, unzipped_destination.to_owned()))?;
@@ -45,8 +48,8 @@ pub fn unzip_mdr_folder(source: SourceDetails, parent_zipped_src_fdr: &PathBuf, 
     info!("Unzipping files from {:?} to {:?}", srce_folder, dest_folder);
     
     // get each zip file in the source folder... (each source has one or more zip files in the associated folder)
-    // Files are arranged in a single list, with no hierarchy of folders within each source's folder.
-    // ?? No need to delete existing files in dest folder
+    // Zip files are arranged in a single list, with no hierarchy of folders within each source's folder.
+    // No need to delete existing files in dest folder - they will be over-written if necessary.
 
     let entries = fs::read_dir(&srce_folder)
                 .map_err(|e| AppError::IoReadErrorWithPath(e, srce_folder))?;
@@ -55,12 +58,12 @@ pub fn unzip_mdr_folder(source: SourceDetails, parent_zipped_src_fdr: &PathBuf, 
 
     for e in entries {
          let src_path = e?.path();
-         info!("source path is {:?}", src_path);
          if src_path.is_file() {
             match src_path.extension() {
                 Some(s) => {
                     if s == PathBuf::from("zip") {
-                        file_num += unzip_folder(&src_path, &dest_folder)?
+                        file_num += unzip_folder(&src_path, &dest_folder)?;
+                        info!("{:?} unzipped. Total files generated so far: {}", src_path, file_num);
                     } 
                     else {
                         continue;
@@ -71,7 +74,9 @@ pub fn unzip_mdr_folder(source: SourceDetails, parent_zipped_src_fdr: &PathBuf, 
         }
     }
     
+    info!("Files generated in total: {}", file_num);
     Ok(file_num)
+
 }
 
 
